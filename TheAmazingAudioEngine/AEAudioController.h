@@ -511,6 +511,21 @@ typedef void (*AEAudioControllerMainThreadMessageHandler)(AEAudioController *aud
 - (id)initWithAudioDescription:(AudioStreamBasicDescription)audioDescription inputEnabled:(BOOL)enableInput useVoiceProcessing:(BOOL)useVoiceProcessing;
 
 /*!
+ * Initialize the audio controller system, with the audio description you provide.
+ *
+ *  Creates and configures the input/output audio unit and initial mixer audio unit.
+ *
+ * @param audioDescription    Audio description to use for all audio
+ * @param enableInput         Whether to enable audio input from the microphone or another input device
+ * @param useVoiceProcessing  Whether to use the voice processing unit (see @link voiceProcessingEnabled @endlink and @link voiceProcessingAvailable @endlink).
+ * @param enableOutput        Whether to enable audio output.  Sometimes when recording from external input-only devices at high sample rates (96k) you may need to disable output for the sample rate to be actually used.
+ */
+- (id)initWithAudioDescription:(AudioStreamBasicDescription)audioDescription inputEnabled:(BOOL)enableInput useVoiceProcessing:(BOOL)useVoiceProcessing outputEnabled:(BOOL)enableOutput;
+
+
+- (BOOL)updateWithAudioDescription:(AudioStreamBasicDescription)audioDescription inputEnabled:(BOOL)enableInput useVoiceProcessing:(BOOL)useVoiceProcessing outputEnabled:(BOOL)enableOutput;
+
+/*!
  * Start audio engine
  *
  * @param error On output, if not NULL, the error
@@ -1044,6 +1059,15 @@ void AEAudioControllerSendAsynchronousMessageToMainThread(AEAudioController     
 - (void)outputAveragePowerLevel:(Float32*)averagePower peakHoldLevel:(Float32*)peakLevel;
 
 /*!
+ * Get output power level information for multiple channels since this method was last called
+ *
+ * @param averagePowers If not NULL, each element of the array on output will be set to the average power level of the most recent output audio for each channel up to count, in decibels
+ * @param peakLevels If not NULL, each element of the array on output will be set to the peak level of the most recent output audio for each channel up to count, in decibels
+ * @param channelCount specifies the number of channels to fill in the averagePowers and peakLevels array parameters
+ */
+- (void)outputAveragePowerLevels:(Float32*)averagePowers peakHoldLevels:(Float32*)peakLevels channelCount:(UInt32)count;
+
+/*!
  * Get output power level information for a particular group, since this method was last called
  *
  * @param averagePower If not NULL, on output will be set to the average power level of the most recent audio, in decibels
@@ -1053,12 +1077,32 @@ void AEAudioControllerSendAsynchronousMessageToMainThread(AEAudioController     
 - (void)averagePowerLevel:(Float32*)averagePower peakHoldLevel:(Float32*)peakLevel forGroup:(AEChannelGroupRef)group;
 
 /*!
+ * Get output power level information for a particular group, since this method was last called
+ *
+ * @param averagePower If not NULL, each element of the array on output will be set to the average power level of the most recent audio for each channel, in decibels
+ * @param peakLevel If not NULL, each element of the array on output will be set to the peak level of the most recent audio for each channel, in decibels
+ * @param group The channel group
+ * @param channelCount specifies the number of channels to fill in the averagePowers and peakLevels array parameters
+ */
+
+- (void)averagePowerLevels:(Float32*)averagePowers peakHoldLevels:(Float32*)peakLevels forGroup:(AEChannelGroupRef)group channelCount:(UInt32)count;
+
+/*!
  * Get input power level information since this method was last called
  *
  * @param averagePower If not NULL, on output will be set to the average power level of the most recent input audio, in decibels
  * @param peakLevel If not NULL, on output will be set to the peak level of the most recent input audio, in decibels
  */
 - (void)inputAveragePowerLevel:(Float32*)averagePower peakHoldLevel:(Float32*)peakLevel;
+
+/*!
+ * Get input power level information for multiple channels since this method was last called
+ *
+ * @param averagePowers If not NULL, each element of the array on output will be set to the average power level of the most recent input audio for each channel up to count, in decibels
+ * @param peakLevels If not NULL, each element of the array on output will be set to the peak level of the most recent input audio for each channel up to count, in decibels
+ * @param channelCount specifies the number of channels to fill in the averagePowers and peakLevels array parameters
+ */
+- (void)inputAveragePowerLevels:(Float32*)averagePowers peakHoldLevels:(Float32*)peakLevels channelCount:(UInt32)count;
 
 ///@}
 #pragma mark - Utilities
@@ -1250,16 +1294,32 @@ NSTimeInterval AEConvertFramesToSeconds(AEAudioController *audioController, long
 /*!
  * Input latency (in seconds)
  *
- *  The currently-reported hardware input latency
+ *  The currently-reported hardware input latency.
+ *  See AEAudioControllerInputLatency.
  */
 @property (nonatomic, readonly) NSTimeInterval inputLatency;
 
 /*!
  * Output latency (in seconds)
  *
- *  The currently-reported hardware output latency
+ *  The currently-reported hardware output latency.
+ *  See AEAudioControllerOutputLatency
  */
 @property (nonatomic, readonly) NSTimeInterval outputLatency;
+
+/*!
+ * Whether to automatically account for input/output latency
+ *
+ *  If you set this property to YES, the timestamps you see in the various callbacks
+ *  will automatically account for input and output latency. If this is NO
+ *  (the default), and you wish to account for latency, you will need to use
+ *  the @link inputLatency @endlink and @link outputLatency @endlink properties, 
+ *  or their corresponding C functions @link AEAudioControllerInputLatency @endlink
+ *  and @link AEAudioControllerOutputLatency @endlink yourself.
+ *
+ *  Default is NO.
+ */
+@property (nonatomic, assign) BOOL automaticLatencyManagement;
 
 /*!
  * Determine whether the audio engine is running
@@ -1334,9 +1394,9 @@ NSTimeInterval AEConvertFramesToSeconds(AEAudioController *audioController, long
  *
  *  For example:
  *
- *      timestamp.mHostTime += AEAudioControllerInputLatency(audioController)*__secondsToHostTicks;
+ *      timestamp.mHostTime -= AEHostTicksFromSeconds(AEAudioControllerInputLatency(audioController));
  *
- *  Note that you should not use this value when connected to Audiobus, as it does not apply in this case.
+ *  Note that when connected to Audiobus input, this function returns 0.
  *
  * @param controller The audio controller
  * @returns The currently-reported hardware input latency
@@ -1350,7 +1410,7 @@ NSTimeInterval AEAudioControllerInputLatency(AEAudioController *controller);
  *
  *  For example:
  *
- *      timestamp.mHostTime += AEAudioControllerOutputLatency(audioController)*__secondsToHostTicks;
+ *      timestamp.mHostTime += AEHostTicksFromSeconds(AEAudioControllerOutputLatency(audioController));
  *
  *  Note that when connected to Audiobus, this value will automatically account for any Audiobus latency.
  *
