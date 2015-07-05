@@ -816,13 +816,15 @@ static OSStatus ioUnitRenderNotifyCallback(void *inRefCon, AudioUnitRenderAction
 }
 
 - (id)initWithAudioDescription:(AudioStreamBasicDescription)audioDescription inputEnabled:(BOOL)enableInput useVoiceProcessing:(BOOL)useVoiceProcessing {
-    return [self initWithAudioDescription:audioDescription inputEnabled:enableInput useVoiceProcessing:NO outputEnabled:YES];
+    return [self initWithAudioDescription:audioDescription inputEnabled:enableInput useVoiceProcessing:useVoiceProcessing outputEnabled:YES];
 }
 
 - (id)initWithAudioDescription:(AudioStreamBasicDescription)audioDescription inputEnabled:(BOOL)enableInput useVoiceProcessing:(BOOL)useVoiceProcessing outputEnabled:(BOOL)enableOutput {
 
     if ( !(self = [super init]) ) return nil;
-    
+
+    NSAssert([NSThread isMainThread], @"Should be initialized on the main thread");
+
     NSAssert(audioDescription.mFormatID == kAudioFormatLinearPCM, @"Only linear PCM supported");
 
     _audioSessionCategory = enableInput ? (enableOutput ? AVAudioSessionCategoryPlayAndRecord : AVAudioSessionCategoryRecord) : AVAudioSessionCategoryPlayback;
@@ -850,7 +852,7 @@ static OSStatus ioUnitRenderNotifyCallback(void *inRefCon, AudioUnitRenderAction
     // Register for notifications
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(interruptionNotification:) name:AVAudioSessionInterruptionNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audioRouteChangeNotification:) name:AVAudioSessionRouteChangeNotification object:nil];
-
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(mediaServiceResetNotification:) name:AVAudioSessionMediaServicesWereResetNotification object:nil];
 
     if ( ![self initAudioSession] || ![self setup] ) {
         _audioGraph = NULL;
@@ -863,6 +865,8 @@ static OSStatus ioUnitRenderNotifyCallback(void *inRefCon, AudioUnitRenderAction
 
 
 - (BOOL)updateWithAudioDescription:(AudioStreamBasicDescription)audioDescription inputEnabled:(BOOL)enableInput useVoiceProcessing:(BOOL)useVoiceProcessing outputEnabled:(BOOL)enableOutput {
+
+    NSAssert([NSThread isMainThread], @"Should be executed on the main thread");
 
     BOOL wasStarted = _started;
     if ( _started ) {
@@ -989,7 +993,7 @@ static OSStatus ioUnitRenderNotifyCallback(void *inRefCon, AudioUnitRenderAction
     
     // Start things up
     if ( !checkResult(status, "AUGraphStart") ) {
-        if ( !recoverFromErrors || ![self attemptRecoveryFromSystemError:error] ) {
+        if ( !recoverFromErrors || ![self attemptRecoveryFromSystemError:error thenStart:YES] ) {
             NSError *startError = [NSError audioControllerErrorWithMessage:@"Couldn't start audio engine" OSStatus:status];
             if ( error && !*error ) *error = startError;
             [[NSNotificationCenter defaultCenter] postNotificationName:AEAudioControllerErrorOccurredNotification object:self userInfo:@{ AEAudioControllerErrorKey: startError}];
@@ -2258,7 +2262,7 @@ NSTimeInterval AEAudioControllerOutputLatency(__unsafe_unretained AEAudioControl
         [[NSNotificationCenter defaultCenter] postNotificationName:AEAudioControllerSessionInterruptionEndedNotification object:self];
     }
     
-    if ( _hasSystemError ) [self attemptRecoveryFromSystemError:NULL];
+    if ( _hasSystemError ) [self attemptRecoveryFromSystemError:NULL thenStart:YES];
 }
 
 -(void)audiobusConnectionsChanged:(NSNotification*)notification {
@@ -2385,6 +2389,14 @@ NSTimeInterval AEAudioControllerOutputLatency(__unsafe_unretained AEAudioControl
                                                             object:self
                                                           userInfo:notification.userInfo];
     });
+}
+
+- (void)mediaServiceResetNotification:(NSNotification*)notification {
+    NSError * error = nil;
+    if ( ![self attemptRecoveryFromSystemError:&error thenStart:YES] ) {
+        NSLog(@"TAAE: Unable to recover from system media services reset: %@", error);
+        _interrupted = YES;
+    }
 }
 
 static void interAppConnectedChangeCallback(void *inRefCon, AudioUnit inUnit, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement) {
@@ -2569,7 +2581,7 @@ static void interAppConnectedChangeCallback(void *inRefCon, AudioUnit inUnit, Au
             || !checkResult(AUGraphRemoveNode(_audioGraph, _ioNode), "AUGraphRemoveNode") // Remove the old IO node
             || !checkResult(AUGraphAddNode(_audioGraph, &io_desc, &_ioNode), "AUGraphAddNode io") // Create new IO node
             || !checkResult(AUGraphNodeInfo(_audioGraph, _ioNode, NULL, &_ioAudioUnit), "AUGraphNodeInfo") ) { // Get reference to input audio unit
-        [self attemptRecoveryFromSystemError:NULL];
+        [self attemptRecoveryFromSystemError:NULL thenStart:YES];
         return;
     }
     
@@ -2577,7 +2589,7 @@ static void interAppConnectedChangeCallback(void *inRefCon, AudioUnit inUnit, Au
     
     OSStatus result = AUGraphUpdate(_audioGraph, NULL);
     if ( result != kAUGraphErr_NodeNotFound /* Ignore this error */ && !checkResult(result, "AUGraphUpdate") ) {
-        [self attemptRecoveryFromSystemError:NULL];
+        [self attemptRecoveryFromSystemError:NULL thenStart:YES];
         return;
     }
 
@@ -2762,7 +2774,7 @@ static void interAppConnectedChangeCallback(void *inRefCon, AudioUnit inUnit, Au
             // Check channels on input
             BOOL hasChannelCount = NO;
             NSInteger channels = audioSession.inputNumberOfChannels;
-            hasChannelCount = channels < 128 && channels >= 0;
+            hasChannelCount = channels < 128 && channels > 0;
             if ( channels == AVAudioSessionErrorCodeIncompatibleCategory ) {
                 // Attempt to force category, and try again
                 NSString * originalCategory = _audioSessionCategory;
@@ -2791,6 +2803,7 @@ static void interAppConnectedChangeCallback(void *inRefCon, AudioUnit inUnit, Au
                     [[NSNotificationCenter defaultCenter] postNotificationName:AEAudioControllerErrorOccurredNotification object:self userInfo:@{ AEAudioControllerErrorKey: _lastError}];
                 }
                 success = NO;
+                inputAvailable = NO;
             }
         }
     }
@@ -3457,7 +3470,7 @@ static void removeChannelsFromGroup(__unsafe_unretained AEAudioController *THIS,
     return _voiceProcessingEnabled && _inputEnabled && (!_voiceProcessingOnlyForSpeakerAndMicrophone || _playingThroughDeviceSpeaker);
 }
 
-- (BOOL)attemptRecoveryFromSystemError:(NSError**)error {
+- (BOOL)attemptRecoveryFromSystemError:(NSError**)error thenStart:(BOOL)start {
     int retries = 3;
     while ( retries > 0 ) {
         NSLog(@"TAAE: Trying to recover from system error (%d retries remain)", retries);
@@ -3468,15 +3481,10 @@ static void removeChannelsFromGroup(__unsafe_unretained AEAudioController *THIS,
         
         [NSThread sleepForTimeInterval:0.5];
         
-        NSError *e = nil;
-        if ( ![((AVAudioSession*)[AVAudioSession sharedInstance]) setActive:YES error:&e] ) {
-            NSLog(@"TAAE: Couldn't activate audio session: %@", e);
-        }
-        
-        if ( [self setup] ) {
+        if ( [self initAudioSession] && [self setup] ) {
             [[NSNotificationCenter defaultCenter] postNotificationName:AEAudioControllerDidRecreateGraphNotification object:self];
             
-            if ( [self start:error recoveringFromErrors:NO] ) {
+            if ( !start || [self start:error recoveringFromErrors:NO] ) {
                 NSLog(@"TAAE: Successfully recovered from system error");
                 _hasSystemError = NO;
                 return YES;
