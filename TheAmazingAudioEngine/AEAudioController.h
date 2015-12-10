@@ -655,6 +655,22 @@ typedef void (*AEAudioControllerMainThreadMessageHandler)(AEAudioController *aud
 - (float)volumeForChannelGroup:(AEChannelGroupRef)group;
 
 /*!
+ * Set the volume level of a channel group (C version)
+ *
+ * @param volume    Group volume (0 - 1)
+ * @param group     Group identifier
+ */
+void AEAudioControllerSetVolumeForChannelGroup(AEAudioController *audioController, float volume, AEChannelGroupRef group);
+
+/*!
+ * Get the volume level of a channel group (C version)
+ *
+ * @param group     Group identifier
+ * @return Group volume (0 - 1)
+ */
+float AEAudioControllerVolumeForChannelGroup(AEAudioController *audioController, AEChannelGroupRef group);
+
+/*!
  * Set the pan of a channel group
  *
  * @param pan       Group pan (-1.0, left to 1.0, right)
