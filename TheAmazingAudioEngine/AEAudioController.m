@@ -1269,9 +1269,9 @@ static OSStatus ioUnitRenderNotifyCallback(void *inRefCon, AudioUnitRenderAction
     return groups;
 }
 
-void AEAudioControllerSetVolumeForChannelGroup(AEAudioController *audioController, float volume, AEChannelGroupRef group) {
+- (void)setVolume:(float)volume forChannelGroup:(AEChannelGroupRef)group {
     int index;
-    AEChannelGroupRef parentGroup = AEAudioControllerSearchForGroupContainingChannelMatchingPtr(audioController, group, NULL, audioController->_topGroup, &index);
+    AEChannelGroupRef parentGroup = [self searchForGroupContainingChannelMatchingPtr:group userInfo:NULL index:&index];
     NSCAssert(parentGroup != NULL, @"Channel not found");
     
     AudioUnitParameterValue value = group->channel->volume = volume;
@@ -1279,16 +1279,8 @@ void AEAudioControllerSetVolumeForChannelGroup(AEAudioController *audioControlle
     checkResult(result, "AudioUnitSetParameter(kMultiChannelMixerParam_Volume)");
 }
 
-float AEAudioControllerVolumeForChannelGroup(AEAudioController *audioController, AEChannelGroupRef group) {
-    return group->channel->volume;
-}
-
-- (void)setVolume:(float)volume forChannelGroup:(AEChannelGroupRef)group {
-    AEAudioControllerSetVolumeForChannelGroup(self, volume, group);
-}
-
 -(float)volumeForChannelGroup:(AEChannelGroupRef)group {
-    return AEAudioControllerVolumeForChannelGroup(self, group);
+    return group->channel->volume;
 }
 
 - (void)setPan:(float)pan forChannelGroup:(AEChannelGroupRef)group {
@@ -1317,6 +1309,12 @@ float AEAudioControllerVolumeForChannelGroup(AEAudioController *audioController,
 
 -(BOOL)channelGroupIsMuted:(AEChannelGroupRef)group {
     return group->channel->muted;
+}
+
+AudioUnit AEAudioControllerGetMixerForGroup(AEAudioController *audioController, AEChannelGroupRef group, int *index) {
+    AEChannelGroupRef parentGroup = AEAudioControllerSearchForGroupContainingChannelMatchingPtr(audioController, group, NULL, audioController->_topGroup, index);
+    NSCAssert(parentGroup != NULL, @"Channel not found");
+    return parentGroup->mixerAudioUnit;
 }
 
 OSStatus AEAudioControllerRenderMainOutput(AEAudioController *audioController, AudioTimeStamp inTimeStamp, UInt32 inNumberFrames, AudioBufferList *ioData) {
@@ -3379,6 +3377,7 @@ static void removeChannelsFromGroup(__unsafe_unretained AEAudioController *THIS,
     }
 }
 
+AEChannelGroupRef AEAudioControllerSearchForGroupContainingChannelMatchingPtr(AEAudioController *audioController, void *ptr, void *userInfo, AEChannelGroupRef group, int *index);
 AEChannelGroupRef AEAudioControllerSearchForGroupContainingChannelMatchingPtr(AEAudioController *audioController, void *ptr, void *userInfo, AEChannelGroupRef group, int *index) {
     // Find the matching channel in the table for the given group
     for ( int i=0; i < group->channelCount; i++ ) {
