@@ -1403,8 +1403,12 @@ static OSStatus ioUnitRenderNotifyCallback(void *inRefCon, AudioUnitRenderAction
     AECheckOSStatus(result, "AudioUnitSetParameter(kMultiChannelMixerParam_Enable)");
 }
 
--(BOOL)channelGroupIsPlaying:(AEChannelGroupRef)group {
+BOOL AEChannelGroupIsPlaying(AEChannelGroupRef group) {
     return group->channel->playing;
+}
+
+-(BOOL)channelGroupIsPlaying:(AEChannelGroupRef)group {
+    return AEChannelGroupIsPlaying(group);
 }
 
 - (void)setMuted:(BOOL)muted forChannelGroup:(AEChannelGroupRef)group {
@@ -1417,8 +1421,12 @@ static OSStatus ioUnitRenderNotifyCallback(void *inRefCon, AudioUnitRenderAction
     AECheckOSStatus(result, "AudioUnitSetParameter(kMultiChannelMixerParam_Volume)");
 }
 
--(BOOL)channelGroupIsMuted:(AEChannelGroupRef)group {
+BOOL AEChannelGroupIsMuted(AEChannelGroupRef group) {
     return group->channel->muted;
+}
+
+-(BOOL)channelGroupIsMuted:(AEChannelGroupRef)group {
+    return AEChannelGroupIsMuted(group);
 }
 
 AudioUnit AEAudioControllerGetMixerForGroup(AEAudioController *audioController, AEChannelGroupRef group, int *index) {

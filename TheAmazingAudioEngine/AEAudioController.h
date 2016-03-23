@@ -839,6 +839,8 @@ typedef enum {
  */
 - (BOOL)channelGroupIsPlaying:(AEChannelGroupRef)group;
 
+BOOL AEChannelGroupIsPlaying(AEChannelGroupRef group);
+
 /*!
  * Set the mute status of a channel group
  *
@@ -857,6 +859,8 @@ typedef enum {
  * @return Whether group is muted
  */
 - (BOOL)channelGroupIsMuted:(AEChannelGroupRef)group;
+
+BOOL AEChannelGroupIsMuted(AEChannelGroupRef group);
 
 /*!
  * Get the multi-channel mixer and index of a channel group
