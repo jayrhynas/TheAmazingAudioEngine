@@ -73,6 +73,19 @@ enum {
 
 
 /*!
+ * Set bit rate
+ *
+ *  Sets the bit rate on the internal converter.
+ *  This will fail if writing has not been started, or if the file type does not support bit rates
+ *
+ * @param bitRate The bit rate to use
+ * @param error On output, if not NULL, the error if one occurred
+ * @return YES on success; NO on error
+ */
+- (BOOL)setBitRate:(UInt32)bitRate error:(NSError**)error;
+
+
+/*!
  * Complete writing operation
  *
  *  Finishes write, closes the file and cleans up internal resources.

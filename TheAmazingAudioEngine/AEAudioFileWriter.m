@@ -210,6 +210,36 @@ NSString * const AEAudioFileWriterErrorDomain = @"com.theamazingaudioengine.AEAu
     return YES;
 }
 
+- (BOOL)setBitRate:(UInt32)bitRate error:(NSError**)error {
+    if ( !_writing ) {
+        return NO;
+    }
+    
+    OSStatus status;
+    
+    AudioConverterRef converter;
+    UInt32 size = sizeof(converter);
+    status = ExtAudioFileGetProperty(_audioFile, kExtAudioFileProperty_AudioConverter, &size, &converter);
+    if ( !AECheckOSStatus(status, "ExtAudioFileGetProperty(kExtAudioFileProperty_AudioConverter") ) {
+        int fourCC = CFSwapInt32HostToBig(status);
+        if ( error ) *error = [NSError errorWithDomain:NSOSStatusErrorDomain
+                                                  code:status
+                                              userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:NSLocalizedString(@"Couldn't get the converter (error %d/%4.4s)", @""), status, (char*)&fourCC]}];
+        return NO;
+    }
+    
+    status = AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate, sizeof(bitRate), &bitRate);
+    if ( !AECheckOSStatus(status, "AudioConverterSetProperty(kAudioConverterEncodeBitRate") ) {
+        int fourCC = CFSwapInt32HostToBig(status);
+        if ( error ) *error = [NSError errorWithDomain:NSOSStatusErrorDomain
+                                                  code:status
+                                              userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:NSLocalizedString(@"Couldn't set the bit rate (error %d/%4.4s)", @""), status, (char*)&fourCC]}];
+        return NO;
+    }
+    
+    return YES;
+}
+
 - (void)finishWriting {
     if ( !_writing ) return;
 
